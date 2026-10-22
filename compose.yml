@@ -1,0 +1,101 @@
+name: safety-ai-control
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: safety-ai-mysql
+    environment:
+      MYSQL_DATABASE: safety_smartyard_control
+      MYSQL_USER: admin123
+      MYSQL_PASSWORD: admin123
+      MYSQL_ROOT_PASSWORD: local_root_only
+      TZ: UTC
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-signup-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-plocal_root_only"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: safety-ai-backend
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/safety_smartyard_control?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC
+      DB_USERNAME: admin123
+      DB_PASSWORD: admin123
+      FILE_STORAGE_TYPE: ${FILE_STORAGE_TYPE:-local}
+      UPLOAD_DIR: /app/uploads
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-ap-northeast-2}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-관리자}
+      FIREBASE_ENABLED: ${FIREBASE_ENABLED:-false}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-aivle25}
+      FIREBASE_CREDENTIALS_PATH: /run/secrets/firebase-adminsdk.json
+      FIREBASE_SERVICE_ACCOUNT_BASE64: ${FIREBASE_SERVICE_ACCOUNT_BASE64:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
+      OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-none}
+      OPENAI_MAX_OUTPUT_TOKENS: ${OPENAI_MAX_OUTPUT_TOKENS:-16000}
+      PERMIT_ANALYSIS_AI_ENABLED: ${PERMIT_ANALYSIS_AI_ENABLED:-true}
+      PERMIT_ANALYSIS_AI_URL: http://permit-analysis:8001
+      PPE_IMAGE_AI_ENABLED: ${PPE_IMAGE_AI_ENABLED:-false}
+      PPE_IMAGE_AI_URL: ${PPE_IMAGE_AI_URL:-http://172.31.43.100:8000}
+      PPE_IMAGE_API_KEY: ${PPE_IMAGE_API_KEY:-}
+    ports:
+      - "${BACKEND_PORT:-8180}:8080"
+    volumes:
+      - backend-uploads:/app/uploads
+      # Keep Compose runnable when Firebase is disabled and no credential file is configured.
+      # When Firebase is enabled, set FIREBASE_CREDENTIALS_HOST_PATH to the service-account JSON.
+      - "${FIREBASE_CREDENTIALS_HOST_PATH:-./.firebaserc}:/run/secrets/firebase-adminsdk.json:ro"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      permit-analysis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  permit-analysis:
+    build:
+      context: ./ai/permit_analysis
+      dockerfile: Dockerfile
+    container_name: safety-ai-permit-analysis
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: safety-ai-frontend
+    environment:
+      VITE_API_BASE_URL: http://localhost:${BACKEND_PORT:-8180}
+      VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      - ./ai/robot_anomaly_agent:/data/robot_anomaly_agent:ro
+      - frontend-node-modules:/app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  mysql-signup-data:
+  backend-uploads:
+  frontend-node-modules:

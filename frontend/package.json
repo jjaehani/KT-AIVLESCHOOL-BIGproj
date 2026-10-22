@@ -1,0 +1,32 @@
+{
+  "name": "smart-shipyard-login",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "sync:welding-data": "node scripts/sync-welding-demo-data.mjs",
+    "predev": "npm run sync:welding-data",
+    "dev": "vite",
+    "prebuild": "npm run sync:welding-data",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.18.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "firebase": "^12.17.1",
+    "hls.js": "^1.6.16",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.9.6",
+    "three": "^0.170.0",
+    "vite": "^6.0.5"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.25",
+    "tailwindcss": "^3.4.17"
+  }
+}

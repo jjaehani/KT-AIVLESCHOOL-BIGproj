@@ -1,0 +1,324 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CheckCircle2,
+  ChevronRight,
+  CircleStop,
+  Clock3,
+  FileCheck2,
+  Pause,
+  Play,
+  Radio,
+  RotateCcw,
+  ShieldCheck,
+  Siren,
+  Users,
+  Wind,
+  Wrench,
+} from "lucide-react";
+import KakaoYardMap from "../../components/digitalTwin/KakaoYardMap";
+import facilityTags from "../../components/digitalTwin/geojeShipyardTags.json";
+import { predictSpatialRisk, spatialRiskModelMetadata } from "../../utils/spatialRiskPredictor";
+import { apiRequest } from "../../api/client";
+
+const FACILITIES = facilityTags
+  .filter((facility) => facility.status === "confirmed")
+  .map((facility) => ({ code: `TAG-${facility.id}`, name: facility.name, lat: facility.lat, lng: facility.lng }));
+
+const WIND_DEGREES = 45;
+
+// 예측 엔진(predictSpatialRisk)과 최적화 로직(optimizeResponses)은 특정 시설/위험유형 전용이 아니라
+// 범용이라, 시나리오는 origin/hazardCode/표시 텍스트만 바꿔서 재사용합니다.
+// (spatialRiskModel.json이 지원하는 hazardCodes: FIRE, GAS, CRANE)
+const SCENARIOS = [
+  {
+    code: "WELD_FIRE", label: "고소 용접 화재 위험 · 소부재조립공장",
+    originCode: "TAG-17", facilityLabel: "소부재조립공장", zoneLabel: "고소 용접 구역",
+    workerId: "W-088", confidence: "97.4%", hazardCode: "FIRE", violationLabel: "소화기 미비치",
+    detectTitle: "화기작업 안전수칙 위반 감지",
+    ppeMetrics: [["작업자", "W-088"], ["AI 신뢰도", "97.4%", true], ["안전모", "착용"], ["소화기", "미비치", true]],
+    alertLine: "W-088 소화기 미비치 · 신뢰도 97.4%",
+    fusionEvidence: [
+      { icon: FileCheck2, label: "작업허가서", value: "고소 용접 · 8.4m" },
+      { icon: Wrench, label: "환기 설비", value: "출력 저하 · 62%", danger: true },
+      { icon: Users, label: "인접 작업자", value: "반경 120m · 6명" },
+      { icon: Wind, label: "환경 데이터", value: "북동풍 · 4.8m/s" },
+    ],
+    fusionNote: "AI가 단순 화기작업 위반을 '고소 용접 + 환기 저하 + 인접 작업자 밀집' 복합 화재 위험으로 재분류했습니다.",
+    permit: "PTW-081 · 고소/화기",
+    executionSteps: ["W-088 외 3명 B통로 대피", "용접 2라인 선택적 작업 중지"],
+    cameraStatuses: ["CAM-01 · 정상 분석 중", "CAM-01 · 화기작업 위반 감지", "TWIN · 현장 데이터 융합", "MLP · 시설 위험 추론", "AI · 대응안 최적화", "OPS · 현장 조치 실행", "TWIN · 안전 상태 동기화"],
+  },
+  {
+    code: "PAINT_GAS", label: "도장공장 가스 누출 · 해양플랜트 도장공장",
+    originCode: "TAG-20", facilityLabel: "해양플랜트 도장 및 전처리 공장", zoneLabel: "밀폐 도장 부스",
+    workerId: "W-142", confidence: "95.1%", hazardCode: "GAS", violationLabel: "방독마스크 미착용",
+    detectTitle: "밀폐공간 가스농도 이상 감지",
+    ppeMetrics: [["작업자", "W-142"], ["AI 신뢰도", "95.1%", true], ["방독마스크", "미착용", true], ["보호복", "착용"]],
+    alertLine: "W-142 방독마스크 미착용 · 신뢰도 95.1%",
+    fusionEvidence: [
+      { icon: FileCheck2, label: "작업허가서", value: "밀폐공간 도장" },
+      { icon: Wrench, label: "가스 농도", value: "기준치 초과 · 71%", danger: true },
+      { icon: Users, label: "인접 작업자", value: "반경 90m · 4명" },
+      { icon: Wind, label: "환경 데이터", value: "북동풍 · 3.2m/s" },
+    ],
+    fusionNote: "AI가 단순 PPE 위반을 '밀폐공간 + 유해가스 농도 상승 + 인접 작업자 밀집' 복합 위험으로 재분류했습니다.",
+    permit: "PTW-114 · 밀폐공간/도장",
+    executionSteps: ["W-142 외 2명 환기구역 대피", "도장 2라인 선택적 작업 중지"],
+    cameraStatuses: ["CAM-01 · 정상 분석 중", "CAM-01 · 가스 농도 이상 감지", "TWIN · 현장 데이터 융합", "MLP · 시설 위험 추론", "AI · 대응안 최적화", "OPS · 현장 조치 실행", "TWIN · 안전 상태 동기화"],
+  },
+  {
+    code: "DOCK_CRANE", label: "골리앗 크레인 인양 위험 · 1도크",
+    originCode: "TAG-22", facilityLabel: "1도크 900톤 골리앗 크레인", zoneLabel: "인양 작업 반경",
+    workerId: "W-205", confidence: "98.0%", hazardCode: "CRANE", violationLabel: "인양 반경 무단진입",
+    detectTitle: "인양 작업 반경 무단 진입 감지",
+    ppeMetrics: [["작업자", "W-205"], ["AI 신뢰도", "98.0%", true], ["안전모", "착용"], ["출입통제", "위반", true]],
+    alertLine: "W-205 인양 반경 무단 진입 · 신뢰도 98.0%",
+    fusionEvidence: [
+      { icon: FileCheck2, label: "작업허가서", value: "중량물 인양" },
+      { icon: Wrench, label: "크레인 하중", value: "820톤 · 91%", danger: true },
+      { icon: Users, label: "인접 작업자", value: "반경 150m · 5명" },
+      { icon: Wind, label: "환경 데이터", value: "북동풍 · 6.1m/s" },
+    ],
+    fusionNote: "AI가 단순 구역 침입을 '고하중 인양 + 강풍 + 인접 작업자 밀집' 복합 낙하 위험으로 재분류했습니다.",
+    permit: "PTW-092 · 중량물 인양",
+    executionSteps: ["W-205 외 4명 안전구역 대피", "인양 작업 즉시 중지"],
+    cameraStatuses: ["CAM-01 · 정상 분석 중", "CAM-01 · 인양구역 무단진입 감지", "TWIN · 현장 데이터 융합", "MLP · 시설 위험 추론", "AI · 대응안 최적화", "OPS · 현장 조치 실행", "TWIN · 안전 상태 동기화"],
+  },
+];
+
+const PHASES = [
+  { code: "OPERATING", time: "정상", short: "정상 운영" },
+  { code: "DETECT", time: "+00:03", short: "AI 감지" },
+  { code: "FUSION", time: "+00:08", short: "트윈 융합" },
+  { code: "FORECAST", time: "+00:14", short: "AI 예측" },
+  { code: "OPTIMIZE", time: "+00:20", short: "대응 최적화" },
+  { code: "EXECUTE", time: "+00:27", short: "현장 실행" },
+  { code: "STABLE", time: "+00:36", short: "안정화" },
+];
+
+const FORECAST_TIME = [5, 5, 15, 60, 90, 90, 120];
+
+// 실측 높이 훅 — 카드 뭉치가 화면 크기/줄바꿈에 따라 높이가 바뀌어도
+// KakaoYardMap의 topOffset/bottomOffset이 항상 정확히 그 높이를 따라가게 함
+function useMeasuredHeight() {
+  const ref = useRef(null);
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    if (!ref.current) return undefined;
+    const observer = new ResizeObserver(([entry]) => setHeight(entry.contentRect.height));
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, height];
+}
+
+function SafetyScenarioTwin({ session, notify, onOpenFactory }) {
+  useEffect(() => {
+    const previousBody = document.body.style.overflow;
+    const previousHtml = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBody;
+      document.documentElement.style.overflow = previousHtml;
+    };
+  }, []);
+  const [scenarioIndex, setScenarioIndex] = useState(0);
+  const [latestRealCheck, setLatestRealCheck] = useState(null); // /api/admin/ppe-checks에서 온 실제 AI 분석 결과 (없으면 null)
+
+  useEffect(() => {
+    if (!session?.token) return; // 로그인 안 됐으면 시도 안 함 — 조용히 카드가 안 뜨는 걸로 처리
+    apiRequest("/api/admin/ppe-checks", { headers: { Authorization: `Bearer ${session.token}` } })
+      .then((rows) => { if (Array.isArray(rows) && rows.length) setLatestRealCheck(rows[0]); })
+      .catch(() => {}); // 실패해도 조용히 무시 — DetectionPanel이 이 카드 자체를 안 보여줌
+  }, [session?.token]);
+  const scenario = SCENARIOS[scenarioIndex];
+  const origin = FACILITIES.find((facility) => facility.code === scenario.originCode);
+
+  const [phaseIndex, setPhaseIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [logRef, logHeight] = useMeasuredHeight();
+
+  const changeScenario = (index) => {
+    setScenarioIndex(index);
+    setPlaying(false);
+    setPhaseIndex(0);
+  };
+
+  useEffect(() => {
+    if (!playing) return undefined;
+    const timer = window.setInterval(() => {
+      setPhaseIndex((current) => {
+        if (current >= PHASES.length - 1) {
+          setPlaying(false);
+          return current;
+        }
+        return current + 1;
+      });
+    }, 4300);
+    return () => window.clearInterval(timer);
+  }, [playing]);
+
+  const rawPredictions = useMemo(() => predictSpatialRisk({
+    originCode: scenario.originCode,
+    hazardCode: scenario.hazardCode,
+    windDegrees: WIND_DEGREES,
+    forecastSeconds: FORECAST_TIME[phaseIndex],
+  }), [scenario, phaseIndex]);
+
+  const facilityRisks = useMemo(() => rawPredictions
+    .map((prediction) => ({
+      ...FACILITIES.find((facility) => facility.code === prediction.facilityCode),
+      probability: phaseIndex === 6 ? prediction.probability * 0.11 : prediction.probability,
+    }))
+    .sort((left, right) => right.probability - left.probability), [phaseIndex, rawPredictions]);
+
+  const affectedFacilities = phaseIndex >= 3 && phaseIndex <= 5
+    ? facilityRisks.filter((facility) => facility.code === origin.code || facility.probability >= 0.28)
+    : [];
+  const optimization = useMemo(() => optimizeResponses(facilityRisks), [facilityRisks]);
+  const safePoint = offsetCoordinate(origin, WIND_DEGREES + 180, 270);
+  const workers = createScenarioWorkers(phaseIndex, origin, safePoint, scenario.workerId);
+  const exposedWorkers = workers.filter((worker) => worker.danger);
+  const routes = phaseIndex === 5 ? exposedWorkers.map((worker) => [
+    { lat: worker.lat, lng: worker.lng },
+    offsetCoordinate({ lat: worker.lat, lng: worker.lng }, 205, 80),
+    safePoint,
+  ]) : [];
+
+  const mapAlerts = phaseIndex === 1 || phaseIndex === 2
+    ? [{ cameraId: "CAM-01", facilityCode: origin.code, active: true, message: scenario.violationLabel }]
+    : affectedFacilities.map((facility) => ({
+      cameraId: "MLP-PREDICT",
+      facilityCode: facility.code,
+      active: true,
+      message: `위험 ${Math.round(facility.probability * 100)}%`,
+    }));
+
+  const plumeRadius = [0, 0, 0, 95, 132, 82, 0][phaseIndex];
+  const riskSimulation = {
+    active: plumeRadius > 0,
+    center: origin,
+    radiusMeters: plumeRadius,
+    windDegrees: WIND_DEGREES,
+    routes,
+    safePoint: phaseIndex >= 4 && phaseIndex <= 5 ? safePoint : null,
+    color: phaseIndex === 5 ? "#ff9f0a" : "#ff453a",
+  };
+
+  const start = () => {
+    if (phaseIndex === PHASES.length - 1) setPhaseIndex(0);
+    setPlaying(true);
+    notify?.("운영 이벤트의 AI 분석을 시작합니다.");
+  };
+  const reset = () => { setPlaying(false); setPhaseIndex(0); };
+
+  const alertBanner = phaseIndex === 1 ? <div className="twin-preserve-dark rounded-2xl border border-red-400/50 bg-[#17090e]/95 px-5 py-4 shadow-[0_0_32px_rgba(255,59,48,.4)]">
+    <div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-red-500 text-white"><Siren size={18}/></span><div><div className="flex items-center gap-2"><p className="text-[11px] font-black tracking-[.17em] text-red-300">CAM-01 · AI DETECTION</p><span className="rounded px-1.5 py-0.5 text-[10px] font-black tracking-[.1em] text-amber-200 bg-amber-400/15 border border-amber-400/30">VALIDATION DATA</span></div><p className="mt-1 text-sm font-black text-white">{scenario.alertLine}</p><p className="mt-1 text-[12px] text-slate-400">{scenario.facilityLabel} {scenario.zoneLabel}</p></div></div>
+  </div> : null;
+
+  // KakaoYardMap 내부 오버레이(카메라배지/StoryPanel/선택카드)가 겹치지 않도록 하는 여백 —
+  // 타임라인이 이제 하단이 아니라 왼쪽으로 옮겨서 bottomOffset은 고정값
+  const topOffset = 16;
+  const bottomOffset = 16;
+  const filterPanelTop = topOffset + Math.round(logHeight) + 8; // 로그 바로 밑에 구역필터가 오도록
+
+  return <div className="twin-theme-page safety-twin relative bg-[#050b12] text-slate-100" style={{ height: "100%", overflow: "hidden" }}>
+
+    {/* 지도 — 화면 전체 배경 */}
+    <div className="absolute inset-0">
+      <KakaoYardMap
+        workers={workers}
+        cameraAlerts={mapAlerts}
+        cameraConnected
+        cameraStatusText={scenario.cameraStatuses[phaseIndex]}
+        riskSimulation={riskSimulation}
+        alertBanner={alertBanner}
+        overlayPanelWidth={370}
+        overlayPanel={<StoryPanel scenario={scenario} scenarioIndex={scenarioIndex} onChangeScenario={changeScenario} latestRealCheck={latestRealCheck}
+          phaseIndex={phaseIndex} facilityRisks={facilityRisks} optimization={optimization}
+          maxHeight={`calc(100dvh - ${topOffset + bottomOffset + 32}px)`}
+          playing={playing} onTogglePlay={playing ? () => setPlaying(false) : start} onReset={reset}
+          onAdvance={() => { setPlaying(false); setPhaseIndex((current) => Math.min(PHASES.length - 1, current + 1)); }}/>}
+        topOffset={topOffset}
+        leftTopOffset={filterPanelTop}
+        bottomOffset={bottomOffset}
+        onOpenShop={onOpenFactory}
+        onUnavailable={() => {}}
+      />
+    </div>
+
+    {/* 왼쪽 맨 위: 세로 로그. 구역 필터(KakaoYardMap 내부)는 이 밑으로 옮겨짐 */}
+    <div ref={logRef} className="twin-preserve-dark absolute z-10 w-52" style={{ left: 16, top: topOffset }}>
+      <OperationalTimeline phaseIndex={phaseIndex} onSelect={(index) => { setPlaying(false); setPhaseIndex(index); }}/>
+    </div>
+  </div>;
+}
+
+function StoryPanel({ scenario, scenarioIndex, onChangeScenario, latestRealCheck, phaseIndex, facilityRisks, optimization, maxHeight, playing, onTogglePlay, onReset, onAdvance }) {
+  const content = [
+    <ReadyPanel scenario={scenario}/>,
+    <DetectionPanel scenario={scenario} latestRealCheck={latestRealCheck}/>,
+    <FusionPanel scenario={scenario}/>,
+    <ForecastPanel scenario={scenario} risks={facilityRisks}/>,
+    <OptimizationPanel scenario={scenario} optimization={optimization}/>,
+    <ExecutionPanel scenario={scenario} optimization={optimization}/>,
+    <StablePanel scenario={scenario}/>,
+  ][phaseIndex];
+  return <aside className="twin-theme-panel flex flex-col overflow-y-auto rounded-2xl border border-cyan/15 bg-ink/55 backdrop-blur-xl p-4 shadow-2xl" style={{ maxHeight: maxHeight || "70vh" }}>
+    <label className="block mb-2.5">
+      <span className="flex items-center gap-1.5 mb-1 text-[10px] font-black tracking-[.14em] text-slate-500">분석 대상 시나리오 <span className="rounded px-1.5 py-0.5 text-[10px] font-black tracking-[.1em] text-amber-200 bg-amber-400/15 border border-amber-400/30">VALIDATION DATA</span></span>
+      <select value={scenarioIndex} onChange={(e) => onChangeScenario(Number(e.target.value))}
+        className="w-full h-9 rounded-lg border border-white/10 bg-[#0a1621] px-2.5 text-[12px] font-bold text-slate-200 outline-none focus:border-cyan-400/50">
+        {SCENARIOS.map((option, index) => <option key={option.code} value={index}>{option.label}</option>)}
+      </select>
+      <span className="block mt-1 text-[10px] leading-4 text-slate-500">실제 카메라·설비 데이터가 아닌, 정해진 시나리오로 재생되는 시연용 스토리입니다.</span>
+    </label>
+    <div className="flex items-center justify-end gap-2 mb-3">
+      <button onClick={onTogglePlay} className="flex h-8 items-center gap-1.5 rounded-lg bg-cyan px-3 text-[11px] font-black text-ink shadow-[0_0_16px_rgba(0,210,255,.55)] hover:brightness-110 transition">{playing ? <Pause size={12}/> : <Play size={12}/>} {playing ? "일시정지" : phaseIndex ? "분석 계속" : "운영 이벤트 분석"}</button>
+      <button onClick={onReset} className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-slate-400 hover:text-white"><RotateCcw size={13}/></button>
+    </div>
+    <div className="flex-1">{content}</div>
+    {phaseIndex < PHASES.length - 1 && <button onClick={onAdvance} className="mt-4 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/25 bg-cyan-400/[.07] text-[12px] font-black text-cyan-200 hover:bg-cyan-400/15">다음 단계 보기 <ChevronRight size={14}/></button>}
+  </aside>;
+}
+
+function PanelHeader({ eyebrow, title, status, danger, scenario }) {
+  return <div className="border-b border-white/10 pb-4"><div className="flex items-center justify-between"><span className={`text-[11px] font-black tracking-[.18em] ${danger ? "text-red-300" : "text-cyan-300"}`}>{eyebrow}</span>{status && <span className={`rounded-full px-2 py-1 text-[10px] font-black ${danger ? "bg-red-500/15 text-red-300" : "bg-emerald-400/10 text-emerald-300"}`}>{status}</span>}</div><h3 className="mt-3 text-base font-black text-white">{title}</h3><p className="mt-1 text-[12px] text-slate-500">{scenario.originCode} · {scenario.facilityLabel}</p></div>;
+}
+
+function ReadyPanel({ scenario }) { return <><PanelHeader scenario={scenario} eyebrow="INPUT DATA READY" title={`${scenario.zoneLabel} 모니터링 시나리오`}/><div className="mt-4 rounded-2xl border border-cyan-400/15 bg-cyan-400/[.04] p-5 text-center"><Radio size={26} className="mx-auto text-cyan-300"/><p className="mt-3 text-xs font-black text-slate-200">시나리오 입력 준비 완료</p><p className="mt-2 text-[12px] leading-5 text-slate-500">CAM-01, 작업자 위치, 작업허가서, 설비 상태를 공통 입력 스키마로 구성했습니다.</p></div><Evidence icon={Users} label="현장 작업자" value="7명"/><Evidence icon={FileCheck2} label="활성 작업허가서" value={scenario.permit}/></>; }
+function DetectionPanel({ scenario, latestRealCheck }) { return <><PanelHeader scenario={scenario} eyebrow="01 · VISION AI" title={scenario.detectTitle || "PPE 위반 감지"} status="CRITICAL" danger/><div className="mt-4 grid grid-cols-2 gap-2">{scenario.ppeMetrics.map(([label, value, danger]) => <Metric key={label} label={label} value={value} danger={danger}/>)}</div><div className="mt-3 rounded-lg border border-white/[.06] bg-white/[.02] p-2.5 text-[11px] leading-5 text-slate-500">현재는 검증용 시나리오 입력값을 사용합니다. 현장 카메라 데이터를 연결하면 동일 필드로 교체해 재검증할 수 있습니다.</div>{latestRealCheck && <div className="mt-3 rounded-xl border border-emerald-400/25 bg-emerald-400/[.06] p-3"><p className="text-[10px] font-black tracking-[.12em] text-emerald-300">실제 AI 분석 최근 사례 (다른 화면의 보호구 점검 기능)</p><div className="mt-2 flex items-center justify-between text-[12px]"><span className="text-slate-300">모델</span><b className="text-slate-100">{latestRealCheck.model || "—"}</b></div><div className="mt-1 flex items-center justify-between text-[12px]"><span className="text-slate-300">안전모 신뢰도</span><b className="text-slate-100">{latestRealCheck.helmetConfidence != null ? `${(latestRealCheck.helmetConfidence * 100).toFixed(1)}%` : "—"}</b></div><div className="mt-1 flex items-center justify-between text-[12px]"><span className="text-slate-300">판정</span><b className={latestRealCheck.status === "passed" ? "text-emerald-300" : "text-amber-300"}>{latestRealCheck.status}</b></div><p className="mt-2 text-[11px] leading-4 text-emerald-100/70">실제 작업자가 제출한 사진을 AI가 분석한 최근 결과입니다.</p></div>}<div className="mt-4 rounded-xl border border-red-400/20 bg-red-500/[.06] p-3 text-[12px] leading-5 text-red-100">감지 입력을 현장 전체 맥락과 결합해 위험 영향 범위를 계산합니다.</div></>; }
+function FusionPanel({ scenario }) { return <><PanelHeader scenario={scenario} eyebrow="02 · TWIN CONTEXT FUSION" title="같은 위반, 다른 위험" status="4 DATA SOURCES"/><div className="mt-4 space-y-2">{scenario.fusionEvidence.map((item) => <Evidence key={item.label} icon={item.icon} label={item.label} value={item.value} danger={item.danger}/>)}</div><div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/[.05] p-3 text-[12px] leading-5 text-amber-100">{scenario.fusionNote}</div></>; }
+function ForecastPanel({ scenario, risks }) { return <><PanelHeader scenario={scenario} eyebrow="03 · MLP INFERENCE" title="시설별 미래 위험 예측" status="DATA-DRIVEN MODEL" danger/><p className="mt-4 text-[11px] font-black tracking-[.14em] text-slate-500">+60 SEC FACILITY RISK</p><div className="mt-3 space-y-3">{risks.slice(0,5).map((facility) => <RiskBar key={facility.code} facility={facility}/>)}</div><div className="mt-4 rounded-xl border border-cyan-400/15 bg-cyan-400/[.05] p-3 text-[12px] leading-5 text-cyan-100">현재 {spatialRiskModelMetadata.sampleCount.toLocaleString()}건의 검증 시나리오로 위험 확산 가능성을 계산합니다. 현장 데이터를 입력하면 동일 예측 파이프라인에서 재검증할 수 있습니다.</div></>; }
+function OptimizationPanel({ scenario, optimization }) { return <><PanelHeader scenario={scenario} eyebrow="04 · COUNTERFACTUAL OPTIMIZER" title="대응전략 비교" status={`${optimization.candidateCount} PLANS`}/><div className="mt-4 space-y-2"><PlanRow name="경고 방송만" risk="63%" loss="2%"/><PlanRow name="공장 전체 중지" risk="8%" loss="100%"/><PlanRow name="AI 최적 대응안" risk={`${optimization.residualRisk}%`} loss={`${optimization.productionLoss}%`} selected/></div><div className="mt-4 rounded-xl border border-emerald-400/25 bg-emerald-400/[.07] p-4"><p className="text-[11px] font-black tracking-[.14em] text-emerald-300">RECOMMENDED ACTION</p><p className="mt-2 text-xs font-black text-white">{optimization.radius}m 부분 통제 + B통로 대피</p><p className="mt-2 text-[12px] leading-5 text-slate-400">예상 대피 {optimization.evacuationMinutes}분 · 생산 손실 {optimization.productionLoss}% · 잔여 위험 {optimization.residualRisk}%</p></div></>; }
+function ExecutionPanel({ scenario, optimization }) { return <><PanelHeader scenario={scenario} eyebrow="05 · RESPONSE EXECUTION" title="AI 대응안 현장 실행" status="IN PROGRESS"/><div className="mt-4 space-y-2"><CheckStep label={`${optimization.radius}m 위험구역 전자 통제선 설정`} done/><CheckStep label={scenario.executionSteps[0]} done/><CheckStep label={scenario.executionSteps[1]} done/><CheckStep label="현장 관리자 PPE 재확인"/></div><div className="mt-4 rounded-xl border border-cyan-400/15 bg-cyan-400/[.05] p-3 text-[12px] leading-5 text-cyan-100"><b>청록색 경로</b>는 현재 위험 확산 방향과 통로 상태를 반영해 선택된 안전 대피 경로입니다.</div></>; }
+function StablePanel({ scenario }) { return <><PanelHeader scenario={scenario} eyebrow="06 · CLOSED LOOP" title="현장 안정화 완료" status="RESOLVED"/><div className="mt-4 grid grid-cols-2 gap-2"><Metric label="위험도" value="91 → 7"/><Metric label="노출 작업자" value="4 → 0"/><Metric label="대응 시간" value="36초"/><Metric label="생산 중지" value="1개 라인"/></div><div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/[.06] p-5 text-center"><CheckCircle2 size={28} className="mx-auto text-emerald-300"/><p className="mt-3 text-xs font-black text-emerald-200">작업자 전원 안전 확인</p><p className="mt-2 text-[12px] leading-5 text-slate-500">공장 전체 중지 없이 필요한 구역만 통제해 안전과 생산성을 함께 확보했습니다.</p></div></>; }
+
+function OperationalTimeline({ phaseIndex, onSelect }) { return <div className="rounded-2xl border border-cyan/15 bg-ink/55 backdrop-blur-xl p-3 shadow-2xl"><div className="mb-2.5 flex items-center justify-between px-1"><span className="text-[11px] font-black tracking-[.14em] text-slate-500">INCIDENT LOG</span><span className="text-[10px] text-slate-600">0142</span></div><div className="flex flex-col gap-1">{PHASES.map((phase,index) => <button key={phase.code} onClick={() => onSelect(index)} className={`rounded-lg border px-2.5 py-2 text-left transition flex items-center justify-between gap-2 ${index===phaseIndex ? "border-cyan-300/40 bg-cyan-400/10" : index<phaseIndex ? "border-emerald-400/15 bg-emerald-400/[.04]" : "border-white/[.06] bg-white/[.02]"}`}><p className={`text-[11px] font-bold ${index===phaseIndex ? "text-white" : "text-slate-500"}`}>{phase.short}</p><span className={`text-[10px] font-black shrink-0 ${index===phaseIndex ? "text-cyan-300" : "text-slate-600"}`}>{phase.time}</span></button>)}</div></div>; }
+function Metric({label,value,danger}) { return <div className={`rounded-xl border p-3 ${danger?"border-red-400/20 bg-red-500/[.06]":"border-white/[.07] bg-white/[.025]"}`}><span className="block text-[11px] text-slate-500">{label}</span><b className={`mt-1 block text-xs ${danger?"text-red-200":"text-slate-200"}`}>{value}</b></div>; }
+function Evidence({icon:Icon,label,value,danger}) { return <div className={`mt-2 flex items-center gap-3 rounded-xl border p-3 ${danger?"border-amber-400/20 bg-amber-400/[.05]":"border-white/[.07] bg-white/[.025]"}`}><Icon size={15} className={danger?"text-amber-300":"text-cyan-300"}/><div><span className="block text-[11px] text-slate-500">{label}</span><b className="mt-0.5 block text-[12px] text-slate-200">{value}</b></div></div>; }
+function RiskBar({facility}) { return <div><div className="mb-1 flex justify-between text-[11px]"><span className="max-w-[230px] truncate font-bold text-slate-300">{facility.name}</span><b className="text-red-200">{Math.round(facility.probability*100)}%</b></div><div className="h-1.5 overflow-hidden rounded-full bg-white/[.06]"><div className="h-full rounded-full bg-gradient-to-r from-orange-500 to-red-500" style={{width:`${Math.max(3,facility.probability*100)}%`}}/></div></div>; }
+function PlanRow({name,risk,loss,selected}) { return <div className={`flex items-center gap-3 rounded-xl border p-3 ${selected?"border-emerald-400/30 bg-emerald-400/[.07]":"border-white/[.07] bg-white/[.025]"}`}><span className={`grid h-7 w-7 place-items-center rounded-lg ${selected?"bg-emerald-400/15 text-emerald-300":"bg-slate-800 text-slate-500"}`}>{selected?<ShieldCheck size={14}/>:<CircleStop size={13}/>}</span><div className="min-w-0 flex-1"><b className={`block text-[12px] ${selected?"text-emerald-200":"text-slate-300"}`}>{name}</b><span className="text-[10px] text-slate-600">잔여 위험 {risk} · 생산 손실 {loss}</span></div>{selected&&<span className="text-[10px] font-black text-emerald-300">SELECTED</span>}</div>; }
+function CheckStep({label,done}) { return <div className="flex items-center gap-3 rounded-xl border border-white/[.07] bg-white/[.025] p-3"><span className={`grid h-6 w-6 place-items-center rounded-full ${done?"bg-emerald-400/15 text-emerald-300":"border border-white/10 text-slate-600"}`}>{done?<CheckCircle2 size={13}/>:<Clock3 size={12}/>}</span><span className={`text-[12px] font-bold ${done?"text-slate-200":"text-slate-500"}`}>{label}</span></div>; }
+
+function optimizeResponses(risks) {
+  const aggregate = risks.slice(0,5).reduce((sum,item)=>sum+item.probability,0)/5;
+  const modes=[{code:"PARTIAL",effect:.22,loss:10},{code:"ZONE",effect:.55,loss:27},{code:"FULL",effect:.83,loss:88}];
+  const candidates=[];
+  for(const radius of [60,80,100,120,140,160,180]) for(const bearing of [0,45,90,135,180,225,270,315]) for(const mode of modes) for(const ventilation of [.45,.7,1]) {
+    const directionError=Math.abs((((bearing-(WIND_DEGREES+180))%360)+540)%360-180);
+    const routePenalty=directionError/180; const control=Math.min(.92,mode.effect+radius/900+ventilation*.08);
+    const residual=aggregate*(1-control); const evac=3.2+routePenalty*4+(180-radius)/180;
+    const loss=mode.loss+radius*.055; const score=residual*70+evac*2.2+loss*.24;
+    candidates.push({radius,bearing,mode:mode.code,ventilation,residualRisk:Math.round(residual*100),evacuationMinutes:Math.max(3,Math.round(evac)),productionLoss:Math.round(loss),score});
+  }
+  candidates.sort((a,b)=>a.score-b.score); return {...candidates[0],candidateCount:candidates.length};
+}
+function createScenarioWorkers(phaseIndex, origin, safePoint, primaryWorkerId) {
+  const placements=[["W-031",290,55],[primaryWorkerId,30,42],["W-160",70,68],["W-274",105,90],["W-317",145,116],["W-402",220,150],["W-511",320,190]];
+  return placements.map(([id,bearing,distance],index)=>{ if(phaseIndex===6&&index<4){const point=offsetCoordinate(safePoint,220+index*22,index*8);return{id,label:id,...point,danger:false};} const point=offsetCoordinate(origin,bearing,distance); const danger=phaseIndex>=3&&phaseIndex<=4?index<4:phaseIndex===5?index<2:phaseIndex===1||phaseIndex===2?index===1:false; return{id,label:id,...point,danger}; });
+}
+function offsetCoordinate(origin,bearingDegrees,distance){const bearing=bearingDegrees*Math.PI/180;return{lat:origin.lat+Math.cos(bearing)*distance/111320,lng:origin.lng+Math.sin(bearing)*distance/(111320*Math.cos(origin.lat*Math.PI/180))};}
+
+export default SafetyScenarioTwin;

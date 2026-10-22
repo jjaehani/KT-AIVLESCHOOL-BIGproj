@@ -1,0 +1,75 @@
+spring:
+  application:
+    name: safety-ai-control
+
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3307/safety_smartyard_control?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC}
+    username: ${DB_USERNAME:admin123}
+    password: ${DB_PASSWORD:admin123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
+
+server:
+  port: ${SERVER_PORT:8080}
+
+app:
+  upload-dir: ${UPLOAD_DIR:uploads}
+  file-storage:
+    type: ${FILE_STORAGE_TYPE:local}
+    local-dir: ${UPLOAD_DIR:uploads}
+    s3:
+      bucket: ${S3_BUCKET:}
+      region: ${S3_REGION:${AWS_REGION:ap-northeast-2}}
+  bootstrap-admin:
+    username: ${BOOTSTRAP_ADMIN_USERNAME:aivle}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:aivle123}
+    name: ${BOOTSTRAP_ADMIN_NAME:테스트 관리자}
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      model: ${OPENAI_MODEL:gpt-5.4-nano}
+      reasoning-effort: ${OPENAI_REASONING_EFFORT:none}
+      max-output-tokens: ${OPENAI_MAX_OUTPUT_TOKENS:16000}
+      connect-timeout-ms: ${OPENAI_CONNECT_TIMEOUT_MS:5000}
+      read-timeout-ms: ${OPENAI_READ_TIMEOUT_MS:120000}
+    robot-anomaly:
+      enabled: ${ROBOT_ANOMALY_AI_ENABLED:true}
+      base-url: ${ROBOT_ANOMALY_AI_URL:http://127.0.0.1:8000}
+      connect-timeout-ms: ${ROBOT_ANOMALY_AI_CONNECT_TIMEOUT_MS:1000}
+      request-timeout-ms: ${ROBOT_ANOMALY_AI_REQUEST_TIMEOUT_MS:1500}
+    permit-analysis:
+      enabled: ${PERMIT_ANALYSIS_AI_ENABLED:true}
+      base-url: ${PERMIT_ANALYSIS_AI_URL:http://127.0.0.1:8001}
+      connect-timeout-ms: ${PERMIT_ANALYSIS_AI_CONNECT_TIMEOUT_MS:3000}
+      request-timeout-ms: ${PERMIT_ANALYSIS_AI_REQUEST_TIMEOUT_MS:120000}
+    ppe-image:
+      enabled: ${PPE_IMAGE_AI_ENABLED:false}
+      base-url: ${PPE_IMAGE_AI_URL:http://127.0.0.1:8000}
+      api-key: ${PPE_IMAGE_API_KEY:}
+      connect-timeout-ms: ${PPE_IMAGE_AI_CONNECT_TIMEOUT_MS:3000}
+      request-timeout-ms: ${PPE_IMAGE_AI_REQUEST_TIMEOUT_MS:180000}
+    safety-report:
+      enabled: ${SAFETY_REPORT_AI_ENABLED:true}
+  firebase:
+    enabled: ${FIREBASE_ENABLED:false}
+    project-id: ${FIREBASE_PROJECT_ID:aivle25}
+    credentials-path: ${FIREBASE_CREDENTIALS_PATH:}
+    service-account-json: ${FIREBASE_SERVICE_ACCOUNT_JSON:}
+    service-account-base64: ${FIREBASE_SERVICE_ACCOUNT_BASE64:}
