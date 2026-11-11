@@ -29,7 +29,7 @@ AWS 인프라를 설계하고 설정한 내용을 정리했습니다.
 |---|---|---|---|
 | api-sg | 80, 443 | 0.0.0.0/0 | 외부에서 API 접근 허용 |
 | gpu-sg | 8000 | api-sg | API 서버에서만 GPU 서버 접근 |
-| db-sg | DB 포트 | api-sg, gpu-sg | 애플리케이션 서버에서만 DB 접근 |
+| db-sg | 3306 | api-sg, gpu-sg | 애플리케이션 서버에서만 DB 접근 |
 
 **원본 영상 보호 (S3)**
 - 버킷을 `shipyard-safety-raw-video`(원본)와 `shipyard-safety-processed-video`(처리 후)로 분리했습니다.
