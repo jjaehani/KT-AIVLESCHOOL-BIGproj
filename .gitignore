@@ -1,0 +1,17 @@
+# 내 컴퓨터 설정과 비밀값
+local.properties
+.env
+.env.*
+!.env.example
+
+# 의존성과 빌드 결과
+node_modules/
+build/
+.gradle/
+
+# 편집기와 운영체제 파일
+.idea/
+.DS_Store
+
+# 로그
+*.log
